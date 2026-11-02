@@ -1,0 +1,17 @@
+# O workflow do lake, como o engine o vê. Um step por enquanto: o `land`.
+#
+# Sem `schedule`: até o gateway entrar (episódio 2) a landing é o `make seed`,
+# e o `land` relê a landing inteira a cada rodada -- duas rodadas sobre a mesma
+# landing dobrariam a tabela. Um run por seed, pelo botão do console ou por
+# `make run`. No episódio 2 a landing passa a ser particionada por hora e o
+# step a ler só o que ainda não pousou.
+name: lake
+description: A landing NDJSON do S3 vira a tabela Iceberg bronze.events.
+type: dag
+tags: [stoa, lake, go]
+
+steps:
+  - id: land
+    run: /opt/brevis/bin/land
+    runtime: go
+    tools: [duckdb]

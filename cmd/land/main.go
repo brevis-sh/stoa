@@ -1,10 +1,15 @@
 // Command land é o step que faz o lake existir: lê a landing NDJSON que ficou
 // no S3, compõe as duas colunas de ingestão, e escreve na tabela Iceberg
 // bronze.events pelo catálogo SQL em Postgres. A primeira rodada cria a
-// tabela a partir da declaração; cada lote de FlushEvery é uma escrita e um
-// snapshot.
+// tabela a partir da declaração; cada lote de STOA_FLUSH_EVERY linhas é uma
+// escrita e um snapshot.
 //
-//	go run ./cmd/land                      # a landing inteira, lotes de 20.000
+// É um sdk.Pipeline, e não um Extract e um Load soltos, porque é assim que o
+// engine o vê: as fases, os contadores e a linha `landed` com
+// iceberg://lake/bronze/events saem do Run, e o /data do console é feito
+// dessa linha. Roda igual na mão:
+//
+//	go run ./cmd/land
 //
 // Este é o `stoa-land` do episódio 1, já com vinte linhas em vez de duzentas:
 // o SDK aprendeu Iceberg (brevis-sh/brevis#230) antes do stoa precisar de cola.
@@ -12,10 +17,9 @@ package main
 
 import (
 	"context"
-	"flag"
-	"fmt"
 	"log"
-	"time"
+	"os"
+	"strconv"
 
 	"brevis.sh/brevis/sdk"
 	"brevis.sh/brevis/sdk/from"
@@ -28,39 +32,36 @@ import (
 )
 
 func main() {
-	every := flag.Int("every", 20_000, "linhas por escrita, e portanto por snapshot")
-	flag.Parse()
-	ctx := context.Background()
 	cfg := lake.FromEnv()
-
-	store, err := cfg.Store(ctx)
+	store, err := cfg.Store(context.Background())
 	if err != nil {
 		log.Fatal(err)
 	}
-	data, err := sdk.Extract(ctx, sdk.Source{
-		From: from.Files{Path: cfg.Landing() + "*.ndjson", Format: sdk.FormatNDJSON, Store: store},
-	})
-	if err != nil {
-		log.Fatalf("extract: %v", err)
+	every := 20_000
+	if v := os.Getenv("STOA_FLUSH_EVERY"); v != "" {
+		if every, err = strconv.Atoi(v); err != nil {
+			log.Fatalf("STOA_FLUSH_EVERY: %v", err)
+		}
 	}
-	data = sdk.Transform(data, sdk.IngestionID(), sdk.IngestionLoadedAt())
-
 	yes := true
-	res, err := sdk.Load(ctx, data, sdk.Target{
-		To: iceberg.Table{
-			Catalog:     cfg.Catalog(),
-			Namespace:   "bronze",
-			Name:        "events",
-			PartitionBy: "occurred_at",
-			CreateTable: &yes,
+
+	sdk.Run(sdk.Pipeline{
+		Name: "land",
+		Source: sdk.Source{
+			From: from.Files{Path: cfg.Landing() + "*.ndjson", Format: sdk.FormatNDJSON, Store: store},
 		},
-		// Schema já é Columns com tipo em cada coluna; o SDK recusa os dois.
-		Schema:     lake.Events,
-		FlushEvery: *every,
+		Transform: []sdk.Transformer{sdk.IngestionID(), sdk.IngestionLoadedAt()},
+		Target: sdk.Target{
+			To: iceberg.Table{
+				Catalog:     cfg.Catalog(),
+				Namespace:   "bronze",
+				Name:        "events",
+				PartitionBy: "occurred_at",
+				CreateTable: &yes,
+			},
+			// Schema já é Columns com tipo em cada coluna; o SDK recusa os dois.
+			Schema:     lake.Events,
+			FlushEvery: every,
+		},
 	})
-	if err != nil {
-		log.Fatalf("load: %v", err)
-	}
-	fmt.Printf("land: %d linhas em %s (%s), tabela criada: %v, %d bytes Parquet, %s\n",
-		res.Rows, res.Target, res.Strategy, res.TableCreated, res.Bytes, res.LoadTime.Round(time.Millisecond))
 }

@@ -13,11 +13,16 @@ produto.
 ## O que já roda hoje
 
 ```sh
-make up      # SeaweedFS (o S3, em Go) e Postgres (o catálogo Iceberg)
+make up      # SeaweedFS (o S3), Postgres (catálogo e engine), o brevis com o console, e o workflow publicado
 make seed    # 100.000 eventos NDJSON na landing do S3, em cinco objetos
-make land    # a landing vira a tabela Iceberg bronze.events: cinco escritas, cinco snapshots
+make run     # enfileira um run do workflow `lake`; o scheduler do brevis executa o step `land`
 make read    # o DuckDB lê a tabela pelo metadata.json: contagem, soma, snapshots
 ```
+
+O console fica em `http://localhost:8080`, usuário `stoa`, senha impressa pelo
+`make up` e guardada em `.env.local`, que nunca é comitado. O run aparece lá
+com o step `land`, suas fases e seus números; `make logs` mostra o scheduler
+executando. `make land` roda o mesmo step na mão, fora do engine.
 
 O `land` é o step `stoa-land` do episódio 1. Ele usa o destino Iceberg do SDK
 do Brevis, [`brevis.sh/brevis/sdk/iceberg`](https://github.com/brevis-sh/brevis/tree/master/sdk/iceberg):
@@ -34,9 +39,11 @@ Trino também achariam a tabela.
 | peça | o que é | de onde vem |
 |---|---|---|
 | SeaweedFS | o S3 do lake, um binário em Go | imagem oficial, `chrislusf/seaweedfs:4.52` |
-| Postgres | o catálogo Iceberg: duas tabelas e um compare-and-swap no ponteiro de metadados | imagem oficial, `postgres:17-alpine` |
+| Postgres | dois bancos: `lake`, o catálogo Iceberg, e `brevis`, o engine | imagem oficial, `postgres:17-alpine` |
+| brevis | o engine: fila, scheduler, console; os steps rodam como processos no container do scheduler | imagens publicadas, `brevissh/brevis:0.41.0` e `:0.41.0-worker` |
+| `workflows/lake.yaml` | o workflow com o step `land`, publicado no projeto `stoa` | este repositório |
 | `seed` | eventos NDJSON na landing, como o gateway deixa | este repositório, `cmd/seed` |
-| `land` | a landing para a tabela Iceberg | este repositório, `cmd/land` |
+| `land` | a landing para a tabela Iceberg, um `sdk.Pipeline` | este repositório, `cmd/land`, compilado em `bin/` pelo `make build` |
 | DuckDB | o leitor que não é o escritor | CLI pinado em 2.0.0, baixado por `scripts/duckdb.sh` |
 
 Configuração por ambiente, com os defaults do `docker-compose.yml`:
@@ -54,6 +61,24 @@ Configuração por ambiente, com os defaults do `docker-compose.yml`:
 | 5 | o snapshot do Iceberg é a geração que invalida o cache da API | |
 
 ## Estado, com honestidade
+
+O workflow não tem `schedule` ainda: o `land` relê a landing inteira a cada
+rodada, e duas rodadas sobre a mesma landing dobrariam a tabela. Um run por
+seed, até o episódio 2 particionar a landing por hora e o step ler só o que
+ainda não pousou.
+
+O `/data` do console ainda não mostra `iceberg://lake/bronze/events`: o engine
+publicado (0.41.0) não conhece o esquema `iceberg://`, que entra em
+[brevis-sh/brevis#229](https://github.com/brevis-sh/brevis/pull/229). O step
+declara a landing e o scheduler registra "a step declared landings the engine
+did not keep, refused=1" no log. Quando esse PR sair numa versão do engine,
+basta subir a tag no `docker-compose.yml`.
+
+Cada run do `land` escreve 140 arquivos Parquet, e não cinco: a tabela é
+particionada por `day(occurred_at)` e os eventos cobrem 28 dias, então cada
+um dos cinco lotes vira um arquivo por dia. É o layout que faz "os eventos de
+ontem" ser uma leitura de um diretório, e é o que um leitor por partição
+espera encontrar.
 
 O `go.mod` tem um `replace` **temporário** de `brevis.sh/brevis/sdk/iceberg`
 para um checkout vizinho do brevis: o destino Iceberg está em
