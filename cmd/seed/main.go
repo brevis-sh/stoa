@@ -39,7 +39,7 @@ func main() {
 				"event_id":    fmt.Sprintf("e-%06d", i),
 				"occurred_at": at.Format(time.RFC3339),
 				"host":        hosts[rnd.IntN(len(hosts))],
-				"quantity":    i % 7,
+				"quantity":    1 + rnd.IntN(5), // não `i % 7`: 28 dias é múltiplo de 7, e a quantidade ficava constante por dia
 				"amount":      fmt.Sprintf("%d.%02d", rnd.IntN(500), rnd.IntN(100)),
 			})
 		}

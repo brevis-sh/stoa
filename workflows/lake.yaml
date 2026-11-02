@@ -1,4 +1,4 @@
-# O workflow do lake, como o engine o vê. Um step por enquanto: o `land`.
+# O workflow do lake, como o engine o vê: `land` e, depois dele, `metrics`.
 #
 # Sem `schedule`: até o gateway entrar (episódio 2) a landing é o `make seed`,
 # e o `land` relê a landing inteira a cada rodada -- duas rodadas sobre a mesma
@@ -6,12 +6,21 @@
 # `make run`. No episódio 2 a landing passa a ser particionada por hora e o
 # step a ler só o que ainda não pousou.
 name: lake
-description: A landing NDJSON do S3 vira a tabela Iceberg bronze.events.
+description: A landing NDJSON vira bronze.events; o DuckDB agrega e grava gold.daily_revenue.
 type: dag
 tags: [stoa, lake, go]
 
 steps:
+  #: A landing NDJSON do S3 vira bronze.events, um snapshot por lote.
   - id: land
     run: /opt/brevis/bin/land
     runtime: go
+
+  #: O DuckDB agrega o bronze por dia e host, e o iceberg-go comita o ouro:
+  #: uma versão nova de gold.daily_revenue a cada run, com computed_at.
+  - id: metrics
+    run: /opt/brevis/bin/metrics
+    runtime: go
     tools: [duckdb]
+    depends_on:
+      - {step: land, label: bronze landed}

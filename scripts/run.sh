@@ -4,10 +4,10 @@
 # .env.local; `brevis backfill` não serve aqui porque materializa slots de
 # agenda, e o workflow é manual até o gateway chegar.
 #
-#   scripts/run.sh [workflow]        # default: lake
+#   scripts/run.sh [workflow] [último step]        # default: lake metrics
 set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-wf="${1:-lake}"
+wf="${1:-lake}"; last="${2:-metrics}"
 console="${STOA_CONSOLE:-http://localhost:8080}"
 # shellcheck disable=SC1091
 . "$here/.env.local"
@@ -22,16 +22,18 @@ esac
 id="${location##*/runs/}"
 echo "run $id enfileirado: $console/runs/$id"
 
-for i in $(seq 1 60); do
+# O run acabou quando o último step disse `loaded`: o log do run traz a saída
+# de cada step, e o SDK encerra cada pipeline com essa linha.
+for i in $(seq 1 100); do
   log="$(curl -fsS -b "$jar" "$console/runs/$id/log.txt" 2>/dev/null || true)"
-  if grep -q 'msg=loaded\|"type":"landed"' <<<"$log"; then
-    grep 'msg=loaded\|"type":"landed"' <<<"$log" | sed 's/^/  /' | tail -2
+  if grep -q "msg=loaded pipeline=$last " <<<"$log"; then
+    grep 'msg=loaded' <<<"$log" | sed -E 's/^.*pipeline=([a-z_]+).*records=([0-9]+).*table=([^ ]+).*table_created=([a-z]+).*duration=([^ ]+).*/  \1: \2 linhas em \3 (criada: \4) em \5/'
     echo "run terminou: $console/runs/$id"; exit 0
   fi
-  if grep -q 'msg="load failed"\|level=ERROR' <<<"$log"; then
-    grep 'level=ERROR\|msg="load failed"' <<<"$log" | sed 's/^/  /' | tail -3
+  if grep -q "✗ \|msg=\"load failed\"\|level=ERROR" <<<"$log"; then
+    grep 'level=ERROR\|msg="load failed"\|✗ ' <<<"$log" | sed 's/^/  /' | tail -4
     echo "run falhou: $console/runs/$id" >&2; exit 1
   fi
   sleep 3
 done
-echo "o run não terminou em três minutos: $console/runs/$id" >&2; exit 1
+echo "o run não terminou em cinco minutos: $console/runs/$id" >&2; exit 1

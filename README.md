@@ -13,10 +13,11 @@ produto.
 ## O que já roda hoje
 
 ```sh
-make up      # SeaweedFS (o S3), Postgres (catálogo e engine), o brevis com o console, o brevis-gateway; workflow e gateway publicados no console
+make up      # SeaweedFS (o S3), Postgres (catálogo e engine), o brevis com o console, o brevis-gateway, Redis e a API das métricas
 make seed    # 100.000 eventos em cinco POSTs ao gateway, que responde 202 e deixa a landing NDJSON no S3
-make run     # dispara um run do workflow `lake`; o scheduler do brevis executa o step `land`
-make read    # o DuckDB lê a tabela pelo metadata.json: contagem, soma, snapshots
+make run     # dispara um run do workflow `lake`: o scheduler executa `land` e depois `metrics`
+make read    # o DuckDB lê bronze.events e gold.daily_revenue pelo metadata.json
+make api     # GET /v1/metrics/daily_revenue duas vezes: a primeira computa no DuckDB, a segunda vem do Redis
 ```
 
 O console fica em `http://localhost:8080`, usuário `stoa`, senha impressa pelo
@@ -44,6 +45,26 @@ um snapshot. O DuckDB lê o resultado sem catálogo, pelo caminho do
 `metadata.json` que o catálogo SQL guarda no Postgres: é assim que Spark e
 Trino também achariam a tabela.
 
+### O ouro também é Iceberg, e a API lê o lake
+
+O step `metrics` é a frase que vale um post: **o DuckDB computa, o iceberg-go
+comita.** Ele pede ao catálogo o `metadata.json` corrente de `bronze.events`,
+agrega receita e volume por dia e por host no DuckDB, e grava o resultado como
+uma versão nova de `gold.daily_revenue` pelo mesmo `iceberg.Table` do `land`.
+O destino Iceberg do SDK só anexa, então cada run grava uma versão com
+`computed_at`, e quem lê pega a mais recente: o ouro também tem história.
+Nenhum cgo: o DuckDB é o CLI pinado, chamado como processo, e a imagem do
+scheduler é o worker publicado do brevis mais a `libstdc++` que ele pede.
+
+A API em `http://localhost:8082/v1/metrics/daily_revenue?from=&to=` lê a
+versão mais recente do ouro pelo DuckDB, e o cache no Redis tem como geração o
+**snapshot id da tabela gold**: enquanto o lake não muda, a resposta vem do
+Redis; quando o `metrics` grava um snapshot novo, a chave muda sozinha. O
+Iceberg já sabe quando mudou, e nenhum TTL precisa adivinhar. Os cabeçalhos
+`X-Lake-Snapshot`, `X-Cache` e `Server-Timing` contam a história de cada
+resposta. O Postgres é só o metastore: o catálogo Iceberg e o banco do engine.
+Nenhum dado do lake mora nele.
+
 ## O que sobe
 
 | peça | o que é | de onde vem |
@@ -52,10 +73,13 @@ Trino também achariam a tabela.
 | Postgres | dois bancos: `lake`, o catálogo Iceberg, e `brevis`, o engine | imagem oficial, `postgres:17-alpine` |
 | brevis | o engine: fila, scheduler, console; os steps rodam como processos no container do scheduler | imagens publicadas, `brevissh/brevis:0.41.0` e `:0.41.0-worker` |
 | brevis-gateway | `POST /v1/events`, 202, a landing NDJSON no S3; descrito e publicado no console pelo `make up` | imagem publicada, `brevissh/brevis-gateway:0.33.0`, config em `deploy/gateway/gateway.yaml` |
-| `workflows/lake.yaml` | o workflow com o step `land`, publicado no projeto `stoa` | este repositório |
+| Redis | o cache da API, chaveado pelo snapshot do ouro | imagem oficial, `redis:7-alpine` |
+| `api` | `GET /v1/metrics/daily_revenue`: o ouro pelo DuckDB, cache por snapshot | este repositório, `cmd/api`, num Alpine com a libstdc++ do CLI (`deploy/runtime`) |
+| `workflows/lake.yaml` | o workflow com os steps `land` e `metrics`, publicado no projeto `stoa` | este repositório |
+| `metrics` | o DuckDB agrega o bronze e o iceberg-go grava `gold.daily_revenue` | este repositório, `cmd/metrics`; o scheduler roda numa imagem derivada do worker com a libstdc++ (`deploy/scheduler`) |
 | `seed` | um produtor: eventos inventados, enviados ao gateway em lotes NDJSON | este repositório, `cmd/seed` |
 | `land` | a landing para a tabela Iceberg, um `sdk.Pipeline` | este repositório, `cmd/land`, compilado em `bin/` pelo `make build` |
-| DuckDB | o leitor que não é o escritor | CLI pinado em 2.0.0, baixado por `scripts/duckdb.sh` |
+| DuckDB | o motor das métricas, e o leitor que não é o escritor | CLI pinado em 2.0.0, baixado por `scripts/duckdb.sh` para o host e, em build musl, para o Linux dos containers |
 
 Configuração por ambiente, com os defaults do `docker-compose.yml`:
 `STOA_S3_ENDPOINT`, `STOA_S3_KEY`, `STOA_S3_SECRET`, `STOA_S3_REGION`,
@@ -67,9 +91,9 @@ Configuração por ambiente, com os defaults do `docker-compose.yml`:
 |---|---|---|
 | 1 | o lake sobe; `land` escreve, DuckDB lê | o próprio `land`: já são vinte linhas sobre `sdk/iceberg`, não duzentas sobre iceberg-go |
 | 2 | o brevis-gateway recebe `POST /v1/events` e deixa a landing no S3 **(feito)** | o `seed` que escrevia no S3; agora ele é só um produtor |
-| 3 | `stoa-metrics`: DuckDB sobre `iceberg_scan`, ouro em Postgres via `sdk.Load`, brevis-sql modela, a API serve | |
-| 4 | o gateway escreve direto no Iceberg com o sink `iceberg` | a landing NDJSON |
-| 5 | o snapshot do Iceberg é a geração que invalida o cache da API | |
+| 3 | `metrics`: DuckDB sobre `iceberg_scan`, ouro **no Iceberg** via `sdk.Load`; uma API lê o ouro com cache por snapshot **(feito)** | nada ainda: o DuckDB como processo e a API são cola até o brevis-sql aprender o dialeto DuckDB |
+| 4 | o gateway escreve direto no Iceberg com o sink `iceberg` | a landing NDJSON e o `land` |
+| 5 | o brevis-sql modela sobre o lake e o brevis-sql-api serve, com o snapshot como geração | a API deste repositório e o DuckDB como processo |
 
 ## Estado, com honestidade
 

@@ -75,7 +75,10 @@ services:
     restart: unless-stopped
 
   scheduler:
-    image: brevissh/brevis:0.41.0-worker
+    # O worker publicado mais a libstdc++ que o CLI do DuckDB pede; ver
+    # deploy/scheduler/Dockerfile.
+    build: deploy/scheduler
+    image: stoa/scheduler:local
     command: ["scheduler", "--interval", "5s", "--concurrency", "2"]
     environment:
       BREVIS_ENV: local
@@ -84,7 +87,7 @@ services:
       BREVIS_LOG_LEVEL: info
       # O que o engine repassa a cada step: o lake, visto de dentro da rede
       # do compose.
-      BREVIS_TASK_ENV: STOA_S3_ENDPOINT,STOA_S3_KEY,STOA_S3_SECRET,STOA_S3_REGION,STOA_BUCKET,STOA_PG_DSN,STOA_FLUSH_EVERY
+      BREVIS_TASK_ENV: STOA_S3_ENDPOINT,STOA_S3_KEY,STOA_S3_SECRET,STOA_S3_REGION,STOA_BUCKET,STOA_PG_DSN,STOA_FLUSH_EVERY,STOA_DUCKDB
       STOA_S3_ENDPOINT: http://seaweedfs:8333
       STOA_S3_KEY: stoa
       STOA_S3_SECRET: stoa-secret
@@ -92,11 +95,45 @@ services:
       STOA_BUCKET: lake
       STOA_PG_DSN: postgres://stoa:stoa@postgres:5432/lake?sslmode=disable
       STOA_FLUSH_EVERY: "20000"
+      STOA_DUCKDB: /opt/brevis/bin/duckdb
     volumes:
       - ./bin:/opt/brevis/bin:ro
     depends_on:
       postgres: {condition: service_healthy}
       migrate: {condition: service_completed_successfully}
+    restart: unless-stopped
+
+  # O cache da API. A geração das chaves é o snapshot id da tabela gold, então
+  # ele nunca serve um ouro velho e nunca precisa de um TTL que adivinhe.
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "56379:6379"
+
+  # A API das métricas: lê o ouro pelo DuckDB, com cache no Redis por
+  # snapshot. Roda num Alpine com a libstdc++ do CLI (deploy/runtime), com o
+  # binário e o CLI montados de bin/, como os steps no scheduler.
+  api:
+    build: deploy/runtime
+    image: stoa/runtime:local
+    command: ["/opt/stoa/bin/api"]
+    environment:
+      STOA_API_ADDR: ":8082"
+      STOA_REDIS: redis:6379
+      STOA_DUCKDB: /opt/stoa/bin/duckdb
+      STOA_S3_ENDPOINT: http://seaweedfs:8333
+      STOA_S3_KEY: stoa
+      STOA_S3_SECRET: stoa-secret
+      STOA_S3_REGION: us-east-1
+      STOA_BUCKET: lake
+      STOA_PG_DSN: postgres://stoa:stoa@postgres:5432/lake?sslmode=disable
+    volumes:
+      - ./bin:/opt/stoa/bin:ro
+    ports:
+      - "8082:8082"
+    depends_on:
+      redis: {condition: service_started}
+      postgres: {condition: service_healthy}
     restart: unless-stopped
 
   gateway:
