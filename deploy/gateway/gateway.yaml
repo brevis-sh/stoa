@@ -1,15 +1,15 @@
-#: O gateway do stoa: uma rota, `POST /v1/events`, que vira landing NDJSON no S3.
-#: O engine lê este arquivo pelo `gateway describe` + `brevis gateway publish`
-#: que o `make up` roda, e o mostra em /data e /ingest/streams.
+#: The stoa gateway: one route, `POST /v1/events`, becoming an NDJSON landing on S3.
+#: The engine reads this file through the `gateway describe` + `brevis gateway publish`
+#: that `make up` runs, and shows it under /data and /ingest/streams.
 name: stoa
 listen:
   addr: :8080
-  #: Um POST pode trazer um lote NDJSON inteiro; 20.000 eventos são ~4 MiB.
+  #: One POST may carry a whole NDJSON batch; 20,000 events are about 4 MiB.
   max_body: 32MiB
 metrics:
   addr: :9090
 streams:
-  #: Os eventos do e-commerce fictício do stoa, um por linha.
+  #: The events of stoa's fictional shop, one per line.
   - name: events
     path: /v1/events
     format: ndjson
@@ -18,14 +18,14 @@ streams:
       entity: events
       source_key: event_id
       record_ts: occurred_at
-    #: O gateway carimba ingestion_loaded_at ao aceitar: é a hora em que o
-    #: evento entrou no lake, e a tabela Iceberg a leva como coluna.
+    #: The gateway stamps ingestion_loaded_at on acceptance: it is the moment the
+    #: event entered the lake, and the Iceberg table carries it as a column.
     stamp_loaded_at: true
     buffer:
       durability: memory
       flush:
-        #: Um objeto na landing a cada 20.000 eventos ou dois segundos, o que
-        #: vier primeiro: é o que o `land` transforma num snapshot por lote.
+        #: One object in the landing every 20,000 events or two seconds, whichever
+        #: comes first: that is what `land` turns into one snapshot per batch.
         every: 2s
         records: 20000
         size: 16MiB
@@ -34,7 +34,7 @@ streams:
       max_records: 200000
       max_bytes: 256MiB
     sink:
-      #: A landing, que o step `land` lê e leva para a tabela Iceberg.
+      #: The landing, which the `land` step reads and carries into the Iceberg table.
       type: files
       path: s3://lake/landing/events/
     retry:

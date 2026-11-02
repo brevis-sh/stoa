@@ -1,8 +1,8 @@
-// Package duck é o DuckDB como processo: o CLI pinado, chamado com -json,
-// lendo o lake pelo caminho do metadata.json. Sem cgo, de propósito: o
-// container do scheduler é Alpine, e um CLI estático é o que roda em qualquer
-// lugar em que o step rode. Quando o DuckDB virar produto no brevis-sql, este
-// pacote some.
+// Package duck is DuckDB as a process: the pinned CLI, called with -json,
+// reading the lake by its metadata.json path. No cgo, on purpose: the
+// scheduler's container is Alpine, and a statically linked CLI is what runs
+// everywhere a step runs. When DuckDB becomes product in brevis-sql, this
+// package goes away.
 package duck
 
 import (
@@ -18,8 +18,8 @@ import (
 	"github.com/brevis-sh/stoa/internal/lake"
 )
 
-// Binary acha o CLI: STOA_DUCKDB, depois `duckdb` ao lado do executável,
-// depois o PATH. O `make build` deixa um em bin/, ao lado dos steps.
+// Binary finds the CLI: STOA_DUCKDB, then `duckdb` next to the executable,
+// then the PATH. `make build` leaves one in bin/, beside the steps.
 func Binary() (string, error) {
 	if v := os.Getenv("STOA_DUCKDB"); v != "" {
 		return v, nil
@@ -32,7 +32,7 @@ func Binary() (string, error) {
 	if p, err := exec.LookPath("duckdb"); err == nil {
 		return p, nil
 	}
-	return "", fmt.Errorf("o CLI do DuckDB não foi encontrado: STOA_DUCKDB, bin/duckdb ou o PATH")
+	return "", fmt.Errorf("the DuckDB CLI was not found: STOA_DUCKDB, bin/duckdb or the PATH")
 }
 
 func isExecutable(p string) bool {
@@ -40,38 +40,38 @@ func isExecutable(p string) bool {
 	return err == nil && !st.IsDir() && st.Mode()&0o111 != 0
 }
 
-// Preamble é o que toda consulta ao lake começa dizendo: as extensões e o
-// segredo S3, nos termos do DuckDB (host:port, path style, sem TLS local).
+// Preamble is what every query against the lake opens with: the extensions
+// and the S3 secret, in DuckDB's terms (host:port, path style, no local TLS).
 func Preamble(cfg lake.Config) string {
 	host := strings.TrimPrefix(strings.TrimPrefix(cfg.S3Endpoint, "http://"), "https://")
 	ssl := "false"
 	if strings.HasPrefix(cfg.S3Endpoint, "https://") {
 		ssl = "true"
 	}
-	// UTC, sempre: um CAST(ts AS DATE) segue o fuso do processo, e o dia de um
-	// evento não pode depender da máquina em que o DuckDB rodou.
+	// UTC, always: a CAST(ts AS DATE) follows the process's timezone, and an
+	// event's day must not depend on the machine DuckDB ran on.
 	return fmt.Sprintf(`INSTALL iceberg; LOAD iceberg; INSTALL httpfs; LOAD httpfs; SET TimeZone='UTC';
 CREATE SECRET lake (TYPE s3, KEY_ID %s, SECRET %s, REGION %s, ENDPOINT %s, URL_STYLE 'path', USE_SSL %s);`,
 		quote(cfg.S3Key), quote(cfg.S3Secret), quote(cfg.S3Region), quote(host), ssl)
 }
 
-// quote é um literal SQL: aspas simples dobradas.
+// quote is a SQL literal: single quotes doubled.
 func quote(s string) string { return "'" + strings.ReplaceAll(s, "'", "''") + "'" }
 
-// Query roda o preâmbulo e a consulta e devolve as linhas da consulta. O CLI
-// imprime um array JSON por comando que devolve linhas -- o CREATE SECRET
-// devolve `[{"Success":true}]` -- e o da consulta é o último; um array com
-// mais de uma linha vem quebrado em várias linhas, então a saída é lida como
-// uma sequência de valores JSON, não linha a linha. Decimais devem vir como
-// texto (`::VARCHAR`) para não perder casas.
+// Query runs the preamble and the query and gives back the query's rows. The
+// CLI prints one JSON array per command that returns rows -- CREATE SECRET
+// returns `[{"Success":true}]` -- and the query's is the last one; an array
+// of more than one row is printed across several lines, so the output is read
+// as a sequence of JSON values rather than line by line. Decimals have to
+// come back as text (`::VARCHAR`) so no digits are lost.
 func Query(ctx context.Context, cfg lake.Config, sql string) ([]map[string]any, error) {
 	bin, err := Binary()
 	if err != nil {
 		return nil, err
 	}
-	cmd := exec.CommandContext(ctx, bin, "-json", "-cmd", Preamble(cfg), "-c", sql) // #nosec G204 -- o binário é o nosso CLI pinado e o SQL é nosso
-	// HOME é onde o DuckDB guarda as extensões; o do usuário do container pode
-	// não existir ou não ser gravável, e um diretório temporário é dos dois.
+	cmd := exec.CommandContext(ctx, bin, "-json", "-cmd", Preamble(cfg), "-c", sql) // #nosec G204 -- the binary is our pinned CLI and the SQL is ours
+	// HOME is where DuckDB keeps its extensions; the container user's may not
+	// exist or may not be writable, and a temporary directory is both.
 	home := filepath.Join(os.TempDir(), "stoa-duckdb")
 	_ = os.MkdirAll(home, 0o700)
 	cmd.Env = append(os.Environ(), "HOME="+home)
@@ -83,7 +83,7 @@ func Query(ctx context.Context, cfg lake.Config, sql string) ([]map[string]any, 
 	return lastValue(out.Bytes())
 }
 
-// lastValue é o último valor JSON da saída: a resposta da consulta.
+// lastValue is the last JSON value in the output: the query's answer.
 func lastValue(out []byte) ([]map[string]any, error) {
 	dec := json.NewDecoder(bytes.NewReader(out))
 	dec.UseNumber()
@@ -91,7 +91,7 @@ func lastValue(out []byte) ([]map[string]any, error) {
 	for dec.More() {
 		var rows []map[string]any
 		if err := dec.Decode(&rows); err != nil {
-			return nil, fmt.Errorf("duckdb: saída não é JSON: %w", err)
+			return nil, fmt.Errorf("duckdb: the output is not JSON: %w", err)
 		}
 		last = rows
 	}

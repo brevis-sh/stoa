@@ -1,12 +1,13 @@
-// Command api serve as métricas do lake: GET /v1/metrics/daily_revenue lê a
-// versão mais recente de gold.daily_revenue pelo DuckDB, e o cache no Redis
-// tem como geração o SNAPSHOT ID da tabela gold. Enquanto o lake não muda, a
-// resposta vem do Redis em microssegundos; quando o `metrics` grava um
-// snapshot novo, a chave muda sozinha e a primeira leitura recalcula. É a
-// ideia do episódio 5 adiantada como cola: o Iceberg já sabe quando mudou, e
-// nenhum TTL precisa adivinhar.
+// Command api serves the lake's metrics: GET /v1/metrics/daily_revenue reads
+// the most recent version of gold.daily_revenue through DuckDB, and the Redis
+// cache is keyed on the gold table's SNAPSHOT ID. While the lake does not
+// move, the answer comes from Redis in microseconds; when `metrics` writes a
+// new snapshot the key changes on its own and the first read recomputes. It
+// is episode 5's idea brought forward as glue: Iceberg already knows when it
+// changed, and no TTL has to guess.
 //
-// Vira produto quando o brevis-sql aprender o dialeto DuckDB; até lá, é isto.
+// It becomes product when brevis-sql learns the DuckDB dialect; until then,
+// this is it.
 package main
 
 import (
@@ -25,7 +26,7 @@ import (
 	"github.com/brevis-sh/stoa/internal/lake"
 	"github.com/redis/go-redis/v9"
 
-	_ "github.com/apache/iceberg-go/io/gocloud/s3" // o backend S3 do iceberg-go, blank import do consumidor
+	_ "github.com/apache/iceberg-go/io/gocloud/s3" // iceberg-go's S3 backend, a blank import the consumer makes
 )
 
 var isDate = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
@@ -60,8 +61,8 @@ func (a *api) dailyRevenue(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	start := time.Now()
 
-	// A geração do cache é o snapshot corrente do ouro: uma leitura de
-	// metadados no catálogo, nenhuma no S3.
+	// The cache's generation is the gold's current snapshot: one metadata read
+	// against the catalog, none against S3.
 	cat, err := a.cfg.Catalog().Open(ctx)
 	if err != nil {
 		a.fail(w, err)
@@ -94,7 +95,7 @@ func (a *api) dailyRevenue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	body, _ := json.Marshal(map[string]any{"snapshot": snapshot, "rows": rows})
-	a.cache.Set(ctx, key, body, 24*time.Hour) // o TTL é só higiene: a chave já muda com o lake
+	a.cache.Set(ctx, key, body, 24*time.Hour) // the TTL is hygiene only: the key already moves with the lake
 	w.Header().Set("X-Cache", "miss")
 	w.Header().Set("Server-Timing", timing("duckdb", queried)+", "+timing("total", start))
 	_, _ = w.Write(body)

@@ -2,10 +2,11 @@ package lake
 
 import "brevis.sh/brevis/sdk"
 
-// DailyRevenue é a tabela gold.daily_revenue: receita e volume por dia e por
-// host, recalculada a cada run do `metrics`. A tabela só anexa, como todo
-// destino Iceberg do SDK hoje, então cada run grava uma versão com
-// `computed_at`, e quem lê pega a mais recente. O ouro também tem história.
+// DailyRevenue is the gold.daily_revenue table: revenue and volume per day
+// and per host, recomputed on every run of `metrics`. The table only appends,
+// as every Iceberg destination in the SDK does today, so each run writes a
+// version stamped with `computed_at` and whoever reads takes the most recent
+// one. The gold has history too.
 var DailyRevenue = sdk.Schema{
 	{Name: "day", Type: sdk.TypeDate, Required: true},
 	{Name: "host", Type: sdk.TypeString, Required: true},
@@ -15,8 +16,8 @@ var DailyRevenue = sdk.Schema{
 	{Name: "computed_at", Type: sdk.TypeTimestamp, Required: true},
 }
 
-// LatestDailyRevenue é a consulta da API: a versão mais recente do ouro, por
-// dia e por host, lida pelo metadata.json corrente da tabela gold.
+// LatestDailyRevenue is the API's query: the most recent version of the gold,
+// per day and per host, read by the gold table's current metadata.json.
 func LatestDailyRevenue(metadata, from, to string) string {
 	where := ""
 	if from != "" {
@@ -31,11 +32,11 @@ FROM gold WHERE computed_at = (SELECT max(computed_at) FROM gold)` + where + `
 ORDER BY day, host`
 }
 
-// BronzeToDailyRevenue é a consulta do `metrics`: do bronze, por dia e host.
+// BronzeToDailyRevenue is the `metrics` query: from the bronze, per day and host.
 func BronzeToDailyRevenue(metadata string) string {
-	// sum() de inteiros no DuckDB é HUGEINT, que o JSON do CLI carrega como
-	// texto; o cast para BIGINT devolve um número, que é o que a coluna
-	// int64 do Iceberg aceita. O decimal vai como texto de propósito.
+	// sum() over integers is HUGEINT in DuckDB, and the CLI's JSON carries it
+	// as text; the cast to BIGINT gives back a number, which is what the
+	// Iceberg int64 column takes. The decimal goes as text on purpose.
 	return `SELECT CAST(occurred_at AS DATE)::VARCHAR AS day, host, count(*)::BIGINT AS events, sum(quantity)::BIGINT AS quantity,
 sum(amount)::VARCHAR AS revenue
 FROM iceberg_scan(` + sqlQuote(metadata) + `) GROUP BY 1, 2 ORDER BY 1, 2`

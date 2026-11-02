@@ -1,8 +1,9 @@
-// Command seed é um produtor: inventa eventos e os envia ao gateway, em lotes
-// NDJSON, exatamente como um serviço faria com um POST. O gateway responde
-// 202, carimba a identidade e deixa a landing no S3; o `land` faz o resto.
+// Command seed is a producer: it invents events and sends them to the gateway
+// in NDJSON batches, exactly as a service would with a POST. The gateway
+// answers 202, stamps the identity and leaves the landing on S3; `land` does
+// the rest.
 //
-//	go run ./cmd/seed -n 100000 -batch 20000     # cinco POSTs de vinte mil linhas
+//	go run ./cmd/seed -n 100000 -batch 20000     # five POSTs of twenty thousand lines
 package main
 
 import (
@@ -19,12 +20,12 @@ import (
 )
 
 func main() {
-	n := flag.Int("n", 100_000, "quantos eventos")
-	batch := flag.Int("batch", 20_000, "eventos por POST")
-	gateway := flag.String("gateway", env("STOA_GATEWAY", "http://localhost:8081"), "o gateway")
+	n := flag.Int("n", 100_000, "how many events")
+	batch := flag.Int("batch", 20_000, "events per POST")
+	gateway := flag.String("gateway", env("STOA_GATEWAY", "http://localhost:8081"), "the gateway")
 	flag.Parse()
 
-	rnd := rand.New(rand.NewPCG(2026, 11)) // #nosec G404 -- dados sintéticos, reprodutíveis
+	rnd := rand.New(rand.NewPCG(2026, 11)) // #nosec G404 -- synthetic data, meant to be reproducible
 	hosts := []string{"web-1", "web-2", "api-1", "api-2", "batch"}
 	client := &http.Client{Timeout: 60 * time.Second}
 	start := time.Now()
@@ -39,7 +40,7 @@ func main() {
 				"event_id":    fmt.Sprintf("e-%06d", i),
 				"occurred_at": at.Format(time.RFC3339),
 				"host":        hosts[rnd.IntN(len(hosts))],
-				"quantity":    1 + rnd.IntN(5), // não `i % 7`: 28 dias é múltiplo de 7, e a quantidade ficava constante por dia
+				"quantity":    1 + rnd.IntN(5), // not `i % 7`: 28 days is a multiple of 7, which made the quantity constant per day
 				"amount":      fmt.Sprintf("%d.%02d", rnd.IntN(500), rnd.IntN(100)),
 			})
 		}
@@ -53,9 +54,9 @@ func main() {
 			log.Fatalf("POST %s/v1/events: %s: %s", *gateway, res.Status, bytes.TrimSpace(msg))
 		}
 		sent += size
-		fmt.Printf("  202 · %d eventos (%d/%d)\n", size, sent, *n)
+		fmt.Printf("  202 · %d events (%d/%d)\n", size, sent, *n)
 	}
-	fmt.Printf("seed: %d eventos aceitos pelo gateway em %s\n", sent, time.Since(start).Round(time.Millisecond))
+	fmt.Printf("seed: %d events accepted by the gateway in %s\n", sent, time.Since(start).Round(time.Millisecond))
 }
 
 func env(name, fallback string) string {

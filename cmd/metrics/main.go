@@ -1,12 +1,13 @@
-// Command metrics é o `stoa-metrics` do episódio 3: o DuckDB computa, o
-// iceberg-go comita. Lê o bronze pelo metadata.json corrente que o catálogo
-// conhece, agrega receita e volume por dia e por host no DuckDB, e grava o
-// resultado como uma versão nova de gold.daily_revenue, com `computed_at`.
-// A tabela só anexa, então o ouro também tem história; a API lê a versão mais
-// recente.
+// Command metrics is episode 3's `stoa-metrics`: DuckDB computes, iceberg-go
+// commits. It reads the bronze by the current metadata.json the catalog
+// knows, aggregates revenue and volume per day and per host in DuckDB, and
+// writes the result as a new version of gold.daily_revenue, stamped with
+// `computed_at`. The table only appends, so the gold has history too, and the
+// API reads the most recent version.
 //
-// É um sdk.Pipeline cuja fonte é o DuckDB: uma consulta vira linhas, e o SDK
-// as leva ao Iceberg como leva qualquer outra. Roda igual na mão:
+// It is an sdk.Pipeline whose source is DuckDB: a query becomes rows, and the
+// SDK carries them to Iceberg as it carries any others. It runs the same by
+// hand:
 //
 //	STOA_DUCKDB=.bin/duckdb go run ./cmd/metrics
 package main
@@ -24,7 +25,7 @@ import (
 	"github.com/brevis-sh/stoa/internal/duck"
 	"github.com/brevis-sh/stoa/internal/lake"
 
-	_ "github.com/apache/iceberg-go/io/gocloud/s3" // o backend S3 do iceberg-go, blank import do consumidor
+	_ "github.com/apache/iceberg-go/io/gocloud/s3" // iceberg-go's S3 backend, a blank import the consumer makes
 )
 
 func main() {
@@ -45,8 +46,9 @@ func main() {
 	})
 }
 
-// bronzeByDay é a fonte: a consulta de agregação no DuckDB sobre bronze.events,
-// uma linha por dia e host, carimbada com a hora deste cálculo.
+// bronzeByDay is the source: the aggregation query in DuckDB over
+// bronze.events, one row per day and host, stamped with this computation's
+// time.
 type bronzeByDay struct {
 	cfg        lake.Config
 	computedAt time.Time
@@ -61,7 +63,7 @@ func (b bronzeByDay) Read(ctx context.Context, _ sdk.ReadOptions) (iter.Seq2[sdk
 	}
 	bronze, err := cat.LoadTable(ctx, catalog.ToIdentifier("bronze", "events"))
 	if err != nil {
-		return nil, fmt.Errorf("bronze.events: %w (rode o land antes)", err)
+		return nil, fmt.Errorf("bronze.events: %w (run land first)", err)
 	}
 	rows, err := duck.Query(ctx, b.cfg, lake.BronzeToDailyRevenue(bronze.MetadataLocation()))
 	if err != nil {

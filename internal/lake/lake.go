@@ -1,6 +1,6 @@
-// Package lake é a configuração do lake do stoa, lida do ambiente uma vez, com
-// os defaults que o docker-compose.yml deste repositório sobe. Um step lê
-// daqui e não espalha endereços pelo código.
+// Package lake is the stoa lake's configuration, read from the environment
+// once, with the defaults the docker-compose.yml in this repository brings up.
+// A step reads from here instead of spreading addresses through the code.
 package lake
 
 import (
@@ -18,17 +18,17 @@ import (
 	awss3 "github.com/aws/aws-sdk-go-v2/service/s3"
 )
 
-// Config é o lake: um S3 e um Postgres.
+// Config is the lake: an S3 and a Postgres.
 type Config struct {
 	S3Endpoint  string // STOA_S3_ENDPOINT
 	S3Region    string // STOA_S3_REGION
 	S3Key       string // STOA_S3_KEY
 	S3Secret    string // STOA_S3_SECRET
 	Bucket      string // STOA_BUCKET
-	PostgresDSN string // STOA_PG_DSN: o catálogo Iceberg
+	PostgresDSN string // STOA_PG_DSN: the Iceberg catalog
 }
 
-// FromEnv lê o ambiente, com os defaults do compose.
+// FromEnv reads the environment, with the compose file's defaults.
 func FromEnv() Config {
 	return Config{
 		S3Endpoint:  env("STOA_S3_ENDPOINT", "http://localhost:8333"),
@@ -47,14 +47,14 @@ func env(name, fallback string) string {
 	return fallback
 }
 
-// Landing é onde o gateway deixa o NDJSON que aceitou.
+// Landing is where the gateway leaves the NDJSON it accepted.
 func (c Config) Landing() string { return "s3://" + c.Bucket + "/landing/events/" }
 
-// Warehouse é onde o Iceberg põe os arquivos das tabelas.
+// Warehouse is where Iceberg puts the tables' files.
 func (c Config) Warehouse() string { return "s3://" + c.Bucket + "/warehouse" }
 
-// Client é um cliente S3 apontado para o endpoint do lake, em path style,
-// que é o que SeaweedFS, MinIO e s3mock falam.
+// Client is an S3 client pointed at the lake's endpoint, in path style,
+// which is what SeaweedFS, MinIO and s3mock speak.
 func (c Config) Client(ctx context.Context) (*awss3.Client, error) {
 	cfg, err := awsconfig.LoadDefaultConfig(ctx,
 		awsconfig.WithRegion(c.S3Region),
@@ -69,7 +69,7 @@ func (c Config) Client(ctx context.Context) (*awss3.Client, error) {
 	}), nil
 }
 
-// Store é o backend que from.Files e to.Files recebem.
+// Store is the backend from.Files and to.Files are handed.
 func (c Config) Store(ctx context.Context) (s3store.Store, error) {
 	client, err := c.Client(ctx)
 	if err != nil {
@@ -78,8 +78,8 @@ func (c Config) Store(ctx context.Context) (s3store.Store, error) {
 	return s3store.New(client), nil
 }
 
-// EnsureBucket cria o bucket se não existir. O iceberg-go escreve num bucket e
-// nunca o cria; um SeaweedFS recém-subido não tem nenhum.
+// EnsureBucket creates the bucket when it does not exist. iceberg-go writes
+// into a bucket and never creates one; a freshly started SeaweedFS has none.
 func (c Config) EnsureBucket(ctx context.Context) error {
 	client, err := c.Client(ctx)
 	if err != nil {
@@ -87,14 +87,14 @@ func (c Config) EnsureBucket(ctx context.Context) error {
 	}
 	_, err = client.CreateBucket(ctx, &awss3.CreateBucketInput{Bucket: aws.String(c.Bucket)})
 	if err != nil && !strings.Contains(err.Error(), "BucketAlreadyOwnedByYou") && !strings.Contains(err.Error(), "BucketAlreadyExists") {
-		return fmt.Errorf("criando o bucket %s em %s: %w", c.Bucket, c.S3Endpoint, err)
+		return fmt.Errorf("creating bucket %s at %s: %w", c.Bucket, c.S3Endpoint, err)
 	}
 	return nil
 }
 
-// Catalog é o catálogo Iceberg do lake: SQL sobre o Postgres, aberto uma vez
-// por processo. O Name é o primeiro segmento de iceberg://lake/bronze/events
-// e, no catálogo SQL, também o catalog_name gravado no Postgres.
+// Catalog is the lake's Iceberg catalog: SQL over Postgres, opened once per
+// process. The Name is the first segment of iceberg://lake/bronze/events and,
+// in a SQL catalog, also the catalog_name recorded in Postgres.
 func (c Config) Catalog() iceberg.Catalog {
 	return iceberg.Catalog{
 		Name:      "lake",
@@ -111,11 +111,11 @@ func (c Config) Catalog() iceberg.Catalog {
 	}
 }
 
-// Events é a tabela bronze.events: o evento como o produtor o envia, mais as
-// duas colunas que o gateway escreve ao aceitar -- ingestion_id, a identidade
-// congelada sobre provider|entity|source_key|record_ts, e ingestion_loaded_at,
-// a hora da aceitação. Declarada, nunca inferida: é a partir daqui que a
-// tabela é criada no primeiro `land`.
+// Events is the bronze.events table: the event as the producer sends it, plus
+// the two columns the gateway writes on acceptance -- ingestion_id, the
+// identity frozen over provider|entity|source_key|record_ts, and
+// ingestion_loaded_at, the moment of acceptance. Declared, never inferred:
+// this is what the first `land` creates the table from.
 var Events = sdk.Schema{
 	{Name: "event_id", Type: sdk.TypeString, Required: true},
 	{Name: "occurred_at", Type: sdk.TypeTimestamp, Required: true},

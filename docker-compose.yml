@@ -1,23 +1,25 @@
-# O lake do stoa. Nenhum container é Java.
+# The stoa lake. Not one container is Java.
 #
-# SeaweedFS é o S3: um binário em Go, imagem oficial, versão PINADA -- um
-# `latest` que muda sozinho é um demo que quebra na manhã em que ninguém mexeu
-# em nada. O `-s3.config` dá identidade ao bucket: sem ele, o filer perde os
-# metadados num reinício e o PutObject seguinte responde 403 (spike S1,
-# 2026-11-02). O volume `seaweedfs` guarda dados e filer entre reinícios.
+# SeaweedFS is the S3: a single Go binary, official image, PINNED version -- a
+# `latest` that moves on its own is a demo that breaks on the morning nobody
+# touched anything. `-s3.config` gives the bucket an identity: without it the
+# filer loses its metadata on a restart and the next PutObject answers 403
+# (spike S1, 2026-11-02). The `seaweedfs` volume keeps data and filer across
+# restarts.
 #
-# Postgres guarda dois bancos: `lake`, o catálogo Iceberg, e `brevis`, o engine.
-# A porta 55439 existe para não brigar com o compose do brevis (55432).
+# Postgres holds two databases: `lake`, the Iceberg catalog, and `brevis`, the
+# engine. Port 55439 exists so it does not collide with Brevis's own compose
+# file (55432).
 #
-# O brevis vem em duas imagens publicadas, com a mesma versão: `brevis` é a API
-# e o console (distroless, não roda nada); `brevis-worker` é o scheduler, que
-# executa os steps como processos locais -- por isso o `bin/` deste repo, com
-# os binários compilados para Linux, é montado nele.
+# Brevis comes in two published images, at the same version: `brevis` is the
+# API and the console (distroless, it runs nothing); `brevis-worker` is the
+# scheduler, which runs the steps as local processes -- which is why this
+# repository's `bin/`, holding the Linux builds, is mounted into it.
 #
-# O brevis-gateway é a porta de entrada dos eventos: `POST /v1/events` e um
-# 202, a landing NDJSON no S3 por conta dele. Não compartilha nada com o engine
-# em runtime; o console o conhece porque o `make up` publica a descrição dele
-# (`describe` + `publish-gateway`, abaixo), como faz com um workflow.
+# brevis-gateway is the events' front door: `POST /v1/events` and a 202, the
+# NDJSON landing on S3 its own business. It shares nothing with the engine at
+# runtime; the console knows it because `make up` publishes its description
+# (`describe` + `publish-gateway`, below), as it does for a workflow.
 services:
   seaweedfs:
     image: chrislusf/seaweedfs:4.52
@@ -62,8 +64,8 @@ services:
       BREVIS_HTTP_ADDR: ":8080"
       BREVIS_DATABASE_URL: postgres://stoa:stoa@postgres:5432/brevis?sslmode=disable
       BREVIS_LOG_LEVEL: info
-      # O login do console vem do .env.local, feito pelo `make up` e nunca
-      # comitado: o repositório é público.
+      # The console's login comes from .env.local, made by `make up` and never
+      # committed: this repository is public.
       BREVIS_AUTH_USER: ${BREVIS_AUTH_USER:-}
       BREVIS_AUTH_PASSWORD_HASH: ${BREVIS_AUTH_PASSWORD_HASH:-}
       BREVIS_AUTH_SECRET: ${BREVIS_AUTH_SECRET:-}
@@ -75,18 +77,18 @@ services:
     restart: unless-stopped
 
   scheduler:
-    # O worker publicado mais a libstdc++ que o CLI do DuckDB pede; ver
+    # The published worker plus the libstdc++ the DuckDB CLI asks for; see
     # deploy/scheduler/Dockerfile.
     build: deploy/scheduler
     image: stoa/scheduler:local
     command: ["scheduler", "--interval", "5s", "--concurrency", "2"]
     environment:
       BREVIS_ENV: local
-      BREVIS_PODS: "off"     # sem cluster aqui: os steps são processos neste container
+      BREVIS_PODS: "off"     # no cluster here: the steps are processes in this container
       BREVIS_DATABASE_URL: postgres://stoa:stoa@postgres:5432/brevis?sslmode=disable
       BREVIS_LOG_LEVEL: info
-      # O que o engine repassa a cada step: o lake, visto de dentro da rede
-      # do compose.
+      # What the engine hands to every step: the lake, as seen from inside the
+      # compose network.
       BREVIS_TASK_ENV: STOA_S3_ENDPOINT,STOA_S3_KEY,STOA_S3_SECRET,STOA_S3_REGION,STOA_BUCKET,STOA_PG_DSN,STOA_FLUSH_EVERY,STOA_DUCKDB
       STOA_S3_ENDPOINT: http://seaweedfs:8333
       STOA_S3_KEY: stoa
@@ -103,16 +105,17 @@ services:
       migrate: {condition: service_completed_successfully}
     restart: unless-stopped
 
-  # O cache da API. A geração das chaves é o snapshot id da tabela gold, então
-  # ele nunca serve um ouro velho e nunca precisa de um TTL que adivinhe.
+  # The API's cache. Its keys are generated from the gold table's snapshot id,
+  # so it never serves a stale gold and never needs a TTL that guesses.
   redis:
     image: redis:7-alpine
     ports:
       - "56379:6379"
 
-  # A API das métricas: lê o ouro pelo DuckDB, com cache no Redis por
-  # snapshot. Roda num Alpine com a libstdc++ do CLI (deploy/runtime), com o
-  # binário e o CLI montados de bin/, como os steps no scheduler.
+  # The metrics API: it reads the gold through DuckDB, cached in Redis per
+  # snapshot. It runs on an Alpine with the CLI's libstdc++ (deploy/runtime),
+  # with the binary and the CLI mounted from bin/, like the steps in the
+  # scheduler.
   api:
     build: deploy/runtime
     image: stoa/runtime:local
@@ -139,11 +142,11 @@ services:
   gateway:
     image: brevissh/brevis-gateway:0.33.0
     environment:
-      BREVIS_ENV: local            # sem token: localmente a porta fica aberta, e o gateway diz isso no log
+      BREVIS_ENV: local            # no token: the door stays open locally, and the gateway says so in its log
       AWS_ACCESS_KEY_ID: stoa
       AWS_SECRET_ACCESS_KEY: stoa-secret
       AWS_REGION: us-east-1
-      AWS_ENDPOINT_URL_S3: http://seaweedfs:8333   # com esta variável o gateway usa path style, que é o que o SeaweedFS fala
+      AWS_ENDPOINT_URL_S3: http://seaweedfs:8333   # with this variable the gateway uses path style, which is what SeaweedFS speaks
     volumes:
       - ./deploy/gateway/gateway.yaml:/etc/brevis/gateway.yaml:ro
     ports:
@@ -152,11 +155,11 @@ services:
       - seaweedfs
     restart: unless-stopped
 
-  # Dois comandos, não serviços, que o `make up` roda em sequência: `describe`
-  # imprime o manifesto do gateway a partir do YAML, na imagem do gateway, e o
-  # Makefile o guarda em .manifest/ (a imagem roda como nonroot e um volume
-  # nomeado nasce do root, então o stdout é o caminho); `publish-gateway` o
-  # entrega ao engine.
+  # Two commands, not services, that `make up` runs in sequence: `describe`
+  # prints the gateway's manifest from the YAML, in the gateway's own image,
+  # and the Makefile keeps it under .manifest/ (the image runs as nonroot and a
+  # named volume is born owned by root, so stdout is the way); `publish-gateway`
+  # hands it to the engine.
   describe:
     profiles: [ops]
     image: brevissh/brevis-gateway:0.33.0
@@ -178,8 +181,9 @@ services:
       migrate: {condition: service_completed_successfully}
     restart: "no"
 
-  # Um comando, não um serviço: `docker compose run --rm publish` escreve os
-  # workflows no banco do engine. O perfil `ops` o mantém fora do `up`.
+  # One command, not a service: `docker compose run --rm publish` writes the
+  # workflows into the engine's database. The `ops` profile keeps it out of
+  # `up`.
   publish:
     profiles: [ops]
     image: brevissh/brevis:0.41.0
