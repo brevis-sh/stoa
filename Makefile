@@ -29,20 +29,24 @@ $(LOCAL_ENV):
 	 } > $(LOCAL_ENV); chmod 600 $(LOCAL_ENV); \
 	 echo "feito $(LOCAL_ENV): o login do console nesta máquina"
 
-up: $(LOCAL_ENV) build ## sobe S3, Postgres, engine e console, e publica os workflows
+up: $(LOCAL_ENV) build ## sobe S3, Postgres, engine, console e gateway; publica workflow e gateway no console
 	@set -a; . ./$(LOCAL_ENV); set +a; $(COMPOSE) up -d
 	@# Sem -f: com identidades no s3.config, a raiz do S3 responde 403, e 403 é "de pé".
 	@for i in $$(seq 1 40); do curl -s -o /dev/null http://localhost:8333/ && break; sleep 1; done; \
 	  curl -s -o /dev/null http://localhost:8333/ || { echo "o SeaweedFS não respondeu em 8333"; $(COMPOSE) logs seaweedfs; exit 1; }
+	@go run ./cmd/bucket
+	@for i in $$(seq 1 60); do curl -fs -o /dev/null http://localhost:8081/health && break; sleep 1; done; \
+	  curl -fs -o /dev/null http://localhost:8081/health || { echo "o gateway não respondeu em 8081"; $(COMPOSE) logs gateway; exit 1; }
 	@for i in $$(seq 1 60); do curl -s -o /dev/null http://localhost:8080/ && break; sleep 1; done; \
 	  curl -s -o /dev/null http://localhost:8080/ || { echo "o console não respondeu em 8080"; $(COMPOSE) logs brevis; exit 1; }
 	@$(COMPOSE) run --rm publish
-	@. ./$(LOCAL_ENV); echo "lake de pé. Console: http://localhost:8080  usuário stoa  senha $$STOA_PASSWORD"
+	@mkdir -p .manifest && $(COMPOSE) run --rm -T describe > .manifest/manifest.json && $(COMPOSE) run --rm publish-gateway
+	@. ./$(LOCAL_ENV); echo "lake de pé. Console: http://localhost:8080  usuário stoa  senha $$STOA_PASSWORD"; echo "gateway: POST http://localhost:8081/v1/events"
 
 down: ## derruba os containers; os dados ficam nos volumes
 	$(COMPOSE) down
 
-seed: ## 100.000 eventos NDJSON na landing do S3, em cinco objetos
+seed: ## 100.000 eventos em cinco POSTs ao gateway, que deixa a landing no S3
 	go run ./cmd/seed
 
 run: ## dispara um run do workflow `lake` pelo console e espera o scheduler executar o `land`
@@ -54,7 +58,7 @@ land: build ## o mesmo step, na mão, fora do engine
 read: ## o DuckDB lê a tabela pelo metadata.json: contagem, soma, snapshots
 	scripts/read.sh
 
-demo: seed run read ## seed, run pelo engine, read pelo DuckDB
+demo: seed run read ## seed pelo gateway, run pelo engine, read pelo DuckDB
 
 logs: ## os logs do scheduler, onde os steps rodam
 	$(COMPOSE) logs -f scheduler

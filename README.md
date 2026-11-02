@@ -13,9 +13,9 @@ produto.
 ## O que já roda hoje
 
 ```sh
-make up      # SeaweedFS (o S3), Postgres (catálogo e engine), o brevis com o console, e o workflow publicado
-make seed    # 100.000 eventos NDJSON na landing do S3, em cinco objetos
-make run     # enfileira um run do workflow `lake`; o scheduler do brevis executa o step `land`
+make up      # SeaweedFS (o S3), Postgres (catálogo e engine), o brevis com o console, o brevis-gateway; workflow e gateway publicados no console
+make seed    # 100.000 eventos em cinco POSTs ao gateway, que responde 202 e deixa a landing NDJSON no S3
+make run     # dispara um run do workflow `lake`; o scheduler do brevis executa o step `land`
 make read    # o DuckDB lê a tabela pelo metadata.json: contagem, soma, snapshots
 ```
 
@@ -24,10 +24,20 @@ O console fica em `http://localhost:8080`, usuário `stoa`, senha impressa pelo
 com o step `land`, suas fases e seus números; `make logs` mostra o scheduler
 executando. `make land` roda o mesmo step na mão, fora do engine.
 
+O gateway é o `brevissh/brevis-gateway` publicado, com uma rota,
+`POST /v1/events`, e um stream `events` configurado em
+`deploy/gateway/gateway.yaml`: formato NDJSON, identidade sobre `event_id` e
+`occurred_at`, `ingestion_id` e `ingestion_loaded_at` carimbados ao aceitar, e
+um objeto na landing a cada 20.000 eventos ou dois segundos. O console o
+mostra em `/data` e `/ingest/streams` porque o `make up` publica a descrição
+dele, como faz com o workflow. Localmente a porta fica aberta, sem token, e o
+gateway diz isso no log; fora de `BREVIS_ENV=local` ele se recusa a subir sem
+`listen.auth`.
+
 O `land` é o step `stoa-land` do episódio 1. Ele usa o destino Iceberg do SDK
 do Brevis, [`brevis.sh/brevis/sdk/iceberg`](https://github.com/brevis-sh/brevis/tree/master/sdk/iceberg):
-lê a landing com `from.Files`, compõe `ingestion_id` e `ingestion_loaded_at`
-com os transformadores do SDK, e escreve com `iceberg.Table`, que cria a tabela
+lê a landing com `from.Files`, já com `ingestion_id` e `ingestion_loaded_at`
+que o gateway escreveu, e escreve com `iceberg.Table`, que cria a tabela
 a partir da declaração na primeira rodada, formato v2, Parquet zstd,
 particionada por `day(occurred_at)`. Cada lote de `FlushEvery` é uma escrita e
 um snapshot. O DuckDB lê o resultado sem catálogo, pelo caminho do
@@ -41,8 +51,9 @@ Trino também achariam a tabela.
 | SeaweedFS | o S3 do lake, um binário em Go | imagem oficial, `chrislusf/seaweedfs:4.52` |
 | Postgres | dois bancos: `lake`, o catálogo Iceberg, e `brevis`, o engine | imagem oficial, `postgres:17-alpine` |
 | brevis | o engine: fila, scheduler, console; os steps rodam como processos no container do scheduler | imagens publicadas, `brevissh/brevis:0.41.0` e `:0.41.0-worker` |
+| brevis-gateway | `POST /v1/events`, 202, a landing NDJSON no S3; descrito e publicado no console pelo `make up` | imagem publicada, `brevissh/brevis-gateway:0.33.0`, config em `deploy/gateway/gateway.yaml` |
 | `workflows/lake.yaml` | o workflow com o step `land`, publicado no projeto `stoa` | este repositório |
-| `seed` | eventos NDJSON na landing, como o gateway deixa | este repositório, `cmd/seed` |
+| `seed` | um produtor: eventos inventados, enviados ao gateway em lotes NDJSON | este repositório, `cmd/seed` |
 | `land` | a landing para a tabela Iceberg, um `sdk.Pipeline` | este repositório, `cmd/land`, compilado em `bin/` pelo `make build` |
 | DuckDB | o leitor que não é o escritor | CLI pinado em 2.0.0, baixado por `scripts/duckdb.sh` |
 
@@ -55,7 +66,7 @@ Configuração por ambiente, com os defaults do `docker-compose.yml`:
 | episódio | o que entra | o que deixa de ser cola |
 |---|---|---|
 | 1 | o lake sobe; `land` escreve, DuckDB lê | o próprio `land`: já são vinte linhas sobre `sdk/iceberg`, não duzentas sobre iceberg-go |
-| 2 | o brevis-gateway recebe `POST /v1/events` e deixa a landing no S3 | o `seed` |
+| 2 | o brevis-gateway recebe `POST /v1/events` e deixa a landing no S3 **(feito)** | o `seed` que escrevia no S3; agora ele é só um produtor |
 | 3 | `stoa-metrics`: DuckDB sobre `iceberg_scan`, ouro em Postgres via `sdk.Load`, brevis-sql modela, a API serve | |
 | 4 | o gateway escreve direto no Iceberg com o sink `iceberg` | a landing NDJSON |
 | 5 | o snapshot do Iceberg é a geração que invalida o cache da API | |

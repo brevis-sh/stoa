@@ -47,7 +47,7 @@ func env(name, fallback string) string {
 	return fallback
 }
 
-// Landing é onde o gateway (ou o seed, por enquanto) deixa o NDJSON.
+// Landing é onde o gateway deixa o NDJSON que aceitou.
 func (c Config) Landing() string { return "s3://" + c.Bucket + "/landing/events/" }
 
 // Warehouse é onde o Iceberg põe os arquivos das tabelas.
@@ -111,15 +111,12 @@ func (c Config) Catalog() iceberg.Catalog {
 	}
 }
 
-// Events é a tabela bronze.events: as quatro colunas de proveniência que o
-// ingestion_id congela, o evento em si, e as duas colunas que a cadeia do
-// SDK escreve. Declarada, nunca inferida: é a partir daqui que a tabela é
-// criada no primeiro `land`.
+// Events é a tabela bronze.events: o evento como o produtor o envia, mais as
+// duas colunas que o gateway escreve ao aceitar -- ingestion_id, a identidade
+// congelada sobre provider|entity|source_key|record_ts, e ingestion_loaded_at,
+// a hora da aceitação. Declarada, nunca inferida: é a partir daqui que a
+// tabela é criada no primeiro `land`.
 var Events = sdk.Schema{
-	{Name: "provider", Type: sdk.TypeString, Required: true},
-	{Name: "entity", Type: sdk.TypeString, Required: true},
-	{Name: "source_key", Type: sdk.TypeString, Required: true},
-	{Name: "record_ts", Type: sdk.TypeTimestamp, Required: true},
 	{Name: "event_id", Type: sdk.TypeString, Required: true},
 	{Name: "occurred_at", Type: sdk.TypeTimestamp, Required: true},
 	{Name: "host", Type: sdk.TypeString},

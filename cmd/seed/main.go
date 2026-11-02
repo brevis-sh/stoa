@@ -1,84 +1,66 @@
-// Command seed deixa eventos NDJSON na landing do lake, no S3, como o
-// brevis-gateway deixa quando recebe um POST: um objeto por lote. É a matéria
-// prima do `land`, e some do stoa no episódio em que o gateway entra em cena.
+// Command seed é um produtor: inventa eventos e os envia ao gateway, em lotes
+// NDJSON, exatamente como um serviço faria com um POST. O gateway responde
+// 202, carimba a identidade e deixa a landing no S3; o `land` faz o resto.
 //
-//	go run ./cmd/seed -n 100000 -every 20000     # cinco objetos de vinte mil
+//	go run ./cmd/seed -n 100000 -batch 20000     # cinco POSTs de vinte mil linhas
 package main
 
 import (
-	"context"
+	"bytes"
+	"encoding/json"
 	"flag"
 	"fmt"
-	"iter"
+	"io"
 	"log"
 	"math/rand/v2"
+	"net/http"
+	"os"
 	"time"
-
-	"brevis.sh/brevis/sdk"
-	"brevis.sh/brevis/sdk/to"
-	"github.com/brevis-sh/stoa/internal/lake"
 )
 
 func main() {
 	n := flag.Int("n", 100_000, "quantos eventos")
-	every := flag.Int("every", 20_000, "eventos por objeto na landing")
+	batch := flag.Int("batch", 20_000, "eventos por POST")
+	gateway := flag.String("gateway", env("STOA_GATEWAY", "http://localhost:8081"), "o gateway")
 	flag.Parse()
-	ctx := context.Background()
-	cfg := lake.FromEnv()
 
-	if err := cfg.EnsureBucket(ctx); err != nil {
-		log.Fatal(err)
-	}
-	store, err := cfg.Store(ctx)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	data, err := sdk.Extract(ctx, sdk.Source{From: generator{n: *n}})
-	if err != nil {
-		log.Fatalf("extract: %v", err)
-	}
-	res, err := sdk.Load(ctx, data, sdk.Target{
-		To:         to.Files{Path: cfg.Landing(), Format: sdk.FormatNDJSON, Store: store},
-		FlushEvery: *every,
-	})
-	if err != nil {
-		log.Fatalf("load: %v", err)
-	}
-	fmt.Printf("seed: %d eventos em %s, %d bytes, %s\n", res.Rows, cfg.Landing(), res.Bytes, res.LoadTime.Round(time.Millisecond))
-}
-
-// generator é uma fonte do SDK que inventa eventos: um e-commerce pequeno,
-// vinte e oito dias de novembro de 2026, quantidades e valores que somam a
-// um número conhecido, para o DuckDB conferir depois.
-type generator struct{ n int }
-
-func (g generator) Describe() string { return fmt.Sprintf("generator(%d events)", g.n) }
-
-func (g generator) Read(_ context.Context, _ sdk.ReadOptions) (iter.Seq2[sdk.Envelope, error], error) {
-	return func(yield func(sdk.Envelope, error) bool) {
-		rnd := rand.New(rand.NewPCG(2026, 11)) // #nosec G404 -- dados sintéticos, reprodutíveis
-		hosts := []string{"web-1", "web-2", "api-1", "api-2", "batch"}
-		for i := 0; i < g.n; i++ {
+	rnd := rand.New(rand.NewPCG(2026, 11)) // #nosec G404 -- dados sintéticos, reprodutíveis
+	hosts := []string{"web-1", "web-2", "api-1", "api-2", "batch"}
+	client := &http.Client{Timeout: 60 * time.Second}
+	start := time.Now()
+	sent := 0
+	for sent < *n {
+		size := min(*batch, *n-sent)
+		var body bytes.Buffer
+		enc := json.NewEncoder(&body)
+		for i := sent; i < sent+size; i++ {
 			at := time.Date(2026, 11, 1+i%28, rnd.IntN(24), rnd.IntN(60), rnd.IntN(60), 0, time.UTC)
-			id := fmt.Sprintf("e-%06d", i)
-			ts := at.Format(time.RFC3339)
-			row := map[string]any{
-				// As quatro colunas de proveniência que o ingestion_id congela.
-				"provider":   "stoa",
-				"entity":     "events",
-				"source_key": id,
-				"record_ts":  ts,
-				// O evento.
-				"event_id":    id,
-				"occurred_at": ts,
+			_ = enc.Encode(map[string]any{
+				"event_id":    fmt.Sprintf("e-%06d", i),
+				"occurred_at": at.Format(time.RFC3339),
 				"host":        hosts[rnd.IntN(len(hosts))],
 				"quantity":    i % 7,
 				"amount":      fmt.Sprintf("%d.%02d", rnd.IntN(500), rnd.IntN(100)),
-			}
-			if !yield(sdk.Envelope{Provider: "stoa", Entity: "events", SourceKey: id, RecordTS: ts, Payload: row}, nil) {
-				return
-			}
+			})
 		}
-	}, nil
+		res, err := client.Post(*gateway+"/v1/events", "application/x-ndjson", &body)
+		if err != nil {
+			log.Fatalf("POST %s/v1/events: %v", *gateway, err)
+		}
+		msg, _ := io.ReadAll(res.Body)
+		_ = res.Body.Close()
+		if res.StatusCode != http.StatusAccepted {
+			log.Fatalf("POST %s/v1/events: %s: %s", *gateway, res.Status, bytes.TrimSpace(msg))
+		}
+		sent += size
+		fmt.Printf("  202 · %d eventos (%d/%d)\n", size, sent, *n)
+	}
+	fmt.Printf("seed: %d eventos aceitos pelo gateway em %s\n", sent, time.Since(start).Round(time.Millisecond))
+}
+
+func env(name, fallback string) string {
+	if v := os.Getenv(name); v != "" {
+		return v
+	}
+	return fallback
 }

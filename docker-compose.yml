@@ -13,6 +13,11 @@
 # e o console (distroless, não roda nada); `brevis-worker` é o scheduler, que
 # executa os steps como processos locais -- por isso o `bin/` deste repo, com
 # os binários compilados para Linux, é montado nele.
+#
+# O brevis-gateway é a porta de entrada dos eventos: `POST /v1/events` e um
+# 202, a landing NDJSON no S3 por conta dele. Não compartilha nada com o engine
+# em runtime; o console o conhece porque o `make up` publica a descrição dele
+# (`describe` + `publish-gateway`, abaixo), como faz com um workflow.
 services:
   seaweedfs:
     image: chrislusf/seaweedfs:4.52
@@ -93,6 +98,48 @@ services:
       postgres: {condition: service_healthy}
       migrate: {condition: service_completed_successfully}
     restart: unless-stopped
+
+  gateway:
+    image: brevissh/brevis-gateway:0.33.0
+    environment:
+      BREVIS_ENV: local            # sem token: localmente a porta fica aberta, e o gateway diz isso no log
+      AWS_ACCESS_KEY_ID: stoa
+      AWS_SECRET_ACCESS_KEY: stoa-secret
+      AWS_REGION: us-east-1
+      AWS_ENDPOINT_URL_S3: http://seaweedfs:8333   # com esta variável o gateway usa path style, que é o que o SeaweedFS fala
+    volumes:
+      - ./deploy/gateway/gateway.yaml:/etc/brevis/gateway.yaml:ro
+    ports:
+      - "8081:8080"
+    depends_on:
+      - seaweedfs
+    restart: unless-stopped
+
+  # Dois comandos, não serviços, que o `make up` roda em sequência: `describe`
+  # imprime o manifesto do gateway a partir do YAML, na imagem do gateway, e o
+  # Makefile o guarda em .manifest/ (a imagem roda como nonroot e um volume
+  # nomeado nasce do root, então o stdout é o caminho); `publish-gateway` o
+  # entrega ao engine.
+  describe:
+    profiles: [ops]
+    image: brevissh/brevis-gateway:0.33.0
+    command: ["describe", "/etc/brevis/gateway.yaml"]
+    volumes:
+      - ./deploy/gateway/gateway.yaml:/etc/brevis/gateway.yaml:ro
+    restart: "no"
+
+  publish-gateway:
+    profiles: [ops]
+    image: brevissh/brevis:0.41.0
+    command: ["gateway", "publish", "/manifest/manifest.json"]
+    environment:
+      BREVIS_DATABASE_URL: postgres://stoa:stoa@postgres:5432/brevis?sslmode=disable
+    volumes:
+      - ./.manifest/manifest.json:/manifest/manifest.json:ro
+    depends_on:
+      postgres: {condition: service_healthy}
+      migrate: {condition: service_completed_successfully}
+    restart: "no"
 
   # Um comando, não um serviço: `docker compose run --rm publish` escreve os
   # workflows no banco do engine. O perfil `ops` o mantém fora do `up`.

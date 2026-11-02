@@ -1,6 +1,6 @@
-// Command land é o step que faz o lake existir: lê a landing NDJSON que ficou
-// no S3, compõe as duas colunas de ingestão, e escreve na tabela Iceberg
-// bronze.events pelo catálogo SQL em Postgres. A primeira rodada cria a
+// Command land é o step que faz o lake existir: lê a landing NDJSON que o
+// gateway deixou no S3, já com ingestion_id e ingestion_loaded_at, e escreve
+// na tabela Iceberg bronze.events pelo catálogo SQL em Postgres. A primeira rodada cria a
 // tabela a partir da declaração; cada lote de STOA_FLUSH_EVERY linhas é uma
 // escrita e um snapshot.
 //
@@ -50,7 +50,8 @@ func main() {
 		Source: sdk.Source{
 			From: from.Files{Path: cfg.Landing() + "*.ndjson", Format: sdk.FormatNDJSON, Store: store},
 		},
-		Transform: []sdk.Transformer{sdk.IngestionID(), sdk.IngestionLoadedAt()},
+		// Nenhum transformador: o gateway já carimbou a identidade e a hora de
+		// aceitação em cada linha, e a declaração abaixo exige as duas.
 		Target: sdk.Target{
 			To: iceberg.Table{
 				Catalog:     cfg.Catalog(),
