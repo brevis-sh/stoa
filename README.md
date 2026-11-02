@@ -74,7 +74,8 @@ gateway says so in its log; outside `BREVIS_ENV=local` it refuses to start
 without `listen.auth`.
 
 `land` is the workflow's first step. It uses Brevis's Iceberg destination,
-[`brevis.sh/brevis/sdk/iceberg`](https://github.com/brevis-sh/brevis/tree/master/sdk/iceberg):
+[`brevis.sh/brevis/sdk/iceberg`](https://pkg.go.dev/brevis.sh/brevis/sdk/iceberg)
+`v0.1.0`, an ordinary published module:
 it reads the landing with `from.Files`, already carrying the two columns the
 gateway wrote, and writes with `iceberg.Table`, which creates the table from
 the declaration on the first run — format v2, zstd Parquet, partitioned by
@@ -154,26 +155,16 @@ because that piece became product.
 
 ## Status, honestly
 
-The `go.mod` carries a **temporary** `replace` of
-`brevis.sh/brevis/sdk/iceberg` to a neighbouring checkout of Brevis: the
-Iceberg destination is in
-[brevis-sh/brevis#230](https://github.com/brevis-sh/brevis/pull/230), and Go
-only resolves that path once the site serves its `go-import` page, which is
-generated from master. When the PR lands and the `sdk/iceberg/v0.1.0` tag
-exists, the `replace` goes away and stoa builds on its own anywhere.
-
 The workflow has no `schedule` yet: `land` re-reads the whole landing on every
 run, and two runs over the same landing would double the table. One run per
 seed, until the landing is partitioned by hour and the step reads only what
 has not landed.
 
 The console's `/data` does not show `iceberg://lake/bronze/events` yet. The
-scheme arrived in
-[brevis-sh/brevis#229](https://github.com/brevis-sh/brevis/pull/229) after the
-published engine was cut, so 0.41.0 does not know it: the step declares the
-landing and the scheduler records "a step declared landings the engine did not
-keep, refused=1" in its log. Raising the tag in `docker-compose.yml` is all it
-takes, once a release carries it.
+scheme landed in Brevis after the published engine was cut, so 0.41.0 does not
+know it: the step declares the landing and the scheduler records "a step
+declared landings the engine did not keep, refused=1" in its log. Raising the
+tag in `docker-compose.yml` is all it takes, once a release carries it.
 
 Each run of `land` writes 140 Parquet files, not five: the table is
 partitioned by `day(occurred_at)` and the events span 28 days, so each of the

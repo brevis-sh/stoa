@@ -1,0 +1,64 @@
+# What this repository can prove without starting the lake: that it builds,
+# that `go vet` is quiet, and that the compose file and the workflow parse.
+# The demo itself needs five containers and is run by hand, by whoever is
+# reading the README -- that is the point of the repository.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version: '1.27'
+          cache: true
+
+      # The same build the steps get: no cgo, Linux, because that is what runs
+      # inside the scheduler's container.
+      - name: Build the steps and the API
+        run: CGO_ENABLED=0 GOOS=linux go build ./...
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: gofmt
+        run: |
+          out=$(gofmt -l .)
+          test -z "$out" || { echo "gofmt pending:"; echo "$out"; exit 1; }
+
+      # The module must resolve from its published path, with no replace: this
+      # repository is also the proof that a consumer outside Brevis can use the
+      # Iceberg destination.
+      - name: No replace directives
+        run: |
+          if grep -q '^replace ' go.mod; then
+            echo "::error::go.mod carries a replace; this repository builds against published modules"
+            grep '^replace ' go.mod
+            exit 1
+          fi
+
+      - name: go.mod and go.sum are tidy
+        run: |
+          go mod tidy
+          git diff --exit-code go.mod go.sum
+
+      - name: The compose file and the workflow parse
+        run: |
+          docker compose -f docker-compose.yml config --quiet
+          python3 -c "import yaml,sys; [yaml.safe_load(open(f)) for f in ['workflows/lake.yaml','deploy/gateway/gateway.yaml']]; print('yaml ok')"
+
+      - name: The scripts are valid shell
+        run: |
+          for f in scripts/*.sh; do bash -n "$f"; done
+          echo "scripts ok"

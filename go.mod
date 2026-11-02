@@ -4,7 +4,7 @@ go 1.26.0
 
 require (
 	brevis.sh/brevis/sdk v0.88.0
-	brevis.sh/brevis/sdk/iceberg v0.0.0-00010101000000-000000000000
+	brevis.sh/brevis/sdk/iceberg v0.1.0
 	github.com/apache/iceberg-go v0.7.0
 	github.com/aws/aws-sdk-go-v2 v1.47.5
 	github.com/aws/aws-sdk-go-v2/config v1.33.10
@@ -107,11 +107,3 @@ require (
 	google.golang.org/protobuf v1.36.12 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
-
-// TEMPORÁRIO, até brevis-sh/brevis#230 pousar no master e a tag
-// sdk/iceberg/v0.1.0 existir. O Go só resolve brevis.sh/brevis/sdk/iceberg
-// quando o site servir a página go-import desse caminho, e ela é gerada do
-// master. Enquanto isso, o módulo vem do worktree vizinho. Quando a página
-// estiver no ar: remova este replace e rode
-// `go get brevis.sh/brevis/sdk/iceberg@v0.1.0`.
-replace brevis.sh/brevis/sdk/iceberg => ../bravis-iceberg-driver/sdk/iceberg
