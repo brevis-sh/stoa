@@ -1,0 +1,38 @@
+# O lake do stoa, em dois containers. Nenhum deles é Java.
+#
+# SeaweedFS é o S3: um binário em Go, imagem oficial, versão PINADA -- um
+# `latest` que muda sozinho é um demo que quebra na manhã em que ninguém
+# mexeu em nada. O `-s3.config` dá identidade ao bucket: sem ele, o filer
+# perde os metadados num reinício e o PutObject seguinte responde 403
+# "auto-create bucket requires Admin permission" (spike S1, 2026-11-02).
+# O volume `seaweedfs` guarda os dados e o filer entre reinícios.
+#
+# Postgres é o catálogo Iceberg (duas tabelas, um compare-and-swap no
+# ponteiro de metadados) e, nos próximos episódios, o ouro. A porta 55439
+# existe para não brigar com o compose do brevis (55432) na mesma máquina.
+services:
+  seaweedfs:
+    image: chrislusf/seaweedfs:4.52
+    command: server -s3 -s3.config=/etc/seaweedfs/s3.json -dir=/data -ip.bind=0.0.0.0 -master.volumeSizeLimitMB=256
+    volumes:
+      - seaweedfs:/data
+      - ./deploy/seaweedfs/s3.json:/etc/seaweedfs/s3.json:ro
+    ports:
+      - "8333:8333"
+
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: stoa
+      POSTGRES_PASSWORD: stoa
+      POSTGRES_DB: lake
+    ports:
+      - "55439:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U stoa -d lake"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  seaweedfs:

@@ -1,0 +1,9 @@
+{
+  "identities": [
+    {
+      "name": "stoa",
+      "credentials": [{"accessKey": "stoa", "secretKey": "stoa-secret"}],
+      "actions": ["Admin", "Read", "Write", "List", "Tagging"]
+    }
+  ]
+}
